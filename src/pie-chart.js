@@ -26,11 +26,7 @@ class PieChart extends AbstractChart {
       if (absolute) {
         value = c.item[this.props.accessor]
       } else {
-        if (total === 0){
-          value = 0 + '%';
-        }else{
-          value = Math.round((100 / total) * c.item[this.props.accessor]) + '%';
-        }
+        value = Math.round((100 / total) * c.item[this.props.accessor]) + '%'
       }
 
       return (

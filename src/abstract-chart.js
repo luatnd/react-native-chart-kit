@@ -1,8 +1,25 @@
 import React, {Component} from 'react'
+// import propTypes from 'prop-types'
 
 import {LinearGradient, Line, Text, Defs, Stop} from 'react-native-svg'
+import TooltipDecorator from './chart-decorators/tooltip'
 
 class AbstractChart extends Component {
+  // static props = {
+  //   yAxisLabelVisible: propTypes.bool,
+  //   renderTooltip: propTypes.func,
+  //   getTooltipTextX: propTypes.func, // (index, value, dataset) => text
+  //   getTooltipTextY: propTypes.func, // (index, value, dataset) => text
+  //   onChartClick: propTypes.func, // (x, y) => {}
+  //   onRendered: propTypes.func, // () => {}: On chart was rendered
+  // };
+
+  /**
+   * For tooltip position calculation
+   */
+  cx = 0;
+  cy = 0;
+
   calcScaler = data => {
     if (this.props.fromZero) {
       return Math.max(...data, 0) - Math.min(...data, 0) || 1
@@ -149,6 +166,150 @@ class AbstractChart extends Component {
     })
   }
 
+  renderVerticalLabelsAutomatically = config => {
+    const {
+      dataset,
+      yLabelCount,
+      yLabelRenderer,
+      width,
+      height,
+      paddingRight,
+      paddingTop,
+      horizontalOffset = 0,
+      stackedBar       = false
+    } = config;
+
+    const fontSize = 12
+    let fac = 1
+    if (stackedBar) {
+      fac = 0.71
+    }
+
+    const data = dataset.data;
+    const pointLabels = dataset.labels;
+    const itemSpace = (width - paddingRight) / data.length;
+
+    /**
+     * Get 6 top label only
+     */
+    let labels = [];
+    let minVal = pointLabels[0];
+    let maxVal = pointLabels[pointLabels.length - 1];
+    const labelCount = yLabelCount;
+    let step = (maxVal - minVal) / labelCount;
+    let cx = 0;
+
+    let lastPosition = -1;
+    for (let i = 0; i < labelCount; i++) {
+      const unPositionedVal = minVal + Math.floor(i * step);
+      let displayVal = '';
+
+      for (let j = lastPosition + 1, c = pointLabels.length; j < c; j++) {
+        const pointLabelVal = pointLabels[j];
+        if (pointLabelVal >= unPositionedVal) {
+          displayVal = pointLabelVal;
+          cx = paddingRight + j * itemSpace;
+          lastPosition = j;
+          break;
+        }
+      }
+
+      const displayText = yLabelRenderer(displayVal);
+      const labelWidth = displayText.length * 4; // 4px per character
+      // const labelWidth = 0;
+
+      labels.push(
+        <Text
+          key={Math.random()}
+          x={cx - labelWidth / 2}
+          y={(height * 3) / 4 + paddingTop + fontSize * 2}
+          fontSize={fontSize}
+          fill={this.props.chartConfig.color(0.5)}
+          textAnchor="middle"
+        >
+          {displayText}
+        </Text>
+      );
+    }
+
+    return labels;
+  };
+
+  renderVerticalLabelsAutomaticallyByDataPoint = config => {
+    const {
+      dataset,
+      yLabelCount,
+      yLabelRenderer,
+      width,
+      height,
+      paddingRight,
+      paddingTop,
+    } = config;
+
+    const fontSize = 12;
+    const data = dataset.data;
+    const pointLabels = dataset.labels;
+    const dl = data.length;
+    const itemSpace = (width - paddingRight) / dl;
+    const color = this.props.chartConfig.color(0.5);
+    const y = (height * 3) / 4 + paddingTop + fontSize * 2;
+
+    /**
+     * Get 6 top label only
+     */
+    let labels = [];
+    const step = dl / yLabelCount;
+
+    if (dl <= yLabelCount) {
+      return pointLabels.map((pointLabel, pointIndex) => {
+        const displayText = yLabelRenderer(pointLabel);
+        // const labelWidth = displayText.length * 4; // 4px per character
+        const labelWidth = 0; // Center
+        const cx = paddingRight + pointIndex * itemSpace;
+
+        return (
+          <Text
+            key={pointIndex}
+            x={cx - labelWidth / 2}
+            y={y}
+            fontSize={fontSize}
+            fill={color}
+            textAnchor="middle"
+          >
+            {displayText}
+          </Text>
+        )
+      })
+    }
+
+    /**
+     * dl > yLabelCount
+     */
+    for (let lc = 1; lc <= yLabelCount; lc++) {
+      const pointIndex = Math.floor(lc * step) - 1;
+      const pointLabel = pointLabels[pointIndex];
+      const displayText = yLabelRenderer(pointLabel);
+      const labelWidth = displayText.length * 4; // 4px per character
+      // const labelWidth = 0; // Center
+      const cx = paddingRight + pointIndex * itemSpace;
+
+      labels.push(
+        <Text
+          key={lc}
+          x={cx - labelWidth / 2}
+          y={y}
+          fontSize={fontSize}
+          fill={color}
+          textAnchor="middle"
+        >
+          {displayText}
+        </Text>
+      );
+    }
+
+    return labels;
+  };
+
   renderVerticalLines = config => {
     const {data, width, height, paddingTop, paddingRight} = config
     return [...new Array(data.length)].map((_, i) => {
@@ -220,6 +381,68 @@ class AbstractChart extends Component {
           />
         </LinearGradient>
       </Defs>
+    )
+  }
+
+  renderTooltip({ value, dataset, getColor }) {
+    return this.props.renderTooltip
+      ? this.props.renderTooltip({ value, dataset, getColor })
+      : null;
+  }
+
+  showDataPointTooltip({ index, value, cx, cy, dataset, getColor }) {
+    this.cx = cx;
+    this.cy = cy;
+
+    // if (this.props.renderTooltip) {
+    //   const tooltipEl = this.renderTooltip({ value, dataset, getColor, index });
+    //
+    //   // append tooltip to view
+    //   //
+    // }
+  }
+
+  hideAllTooltip() {
+    this.setState({
+      tooltipVisible: false,
+    })
+  }
+
+  calCx(index) {
+    // return index;
+    return this.cx;
+    // return this.cx + index;
+  }
+
+  calCy(value) {
+    // return value;
+    return this.cy;
+    // return this.cy + value;
+  }
+
+  renderTooltipElement() {
+    const {
+            tooltipVisible,
+            tooltipTextX,
+            tooltipTextY,
+            tooltipTargetIndex,
+            tooltipTargetValue,
+          } = this.state;
+    const { height } = this.props;
+
+    return (
+      <TooltipDecorator
+        visible={tooltipVisible}
+        textX={tooltipTextX}
+        textY={tooltipTextY}
+        index={tooltipTargetIndex}
+        value={tooltipTargetValue}
+        x={(index) => this.calCx(index)} // x(index) => x tooltip
+        y={(value) => this.calCy(value)} // y(value) => y value
+        chartHeight={height}
+        stroke={'#00ccff'}
+        pointStroke={'#00ccff'}
+      />
     )
   }
 }

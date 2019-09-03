@@ -1,9 +1,64 @@
 import React from 'react'
-import {View} from 'react-native'
+import propTypes from 'prop-types'
+import {View, TouchableWithoutFeedback} from 'react-native'
 import {Svg, Circle, Polygon, Polyline, Path, Rect, G} from 'react-native-svg'
 import AbstractChart from './abstract-chart'
+import memoize from "lodash.memoize";
+
 
 class LineChart extends AbstractChart {
+  static props = {
+    yAxisLabelVisible: propTypes.bool,
+    renderTooltip: propTypes.func,
+    // getTooltipTextX: propTypes.func, // (index, value, dataset) => text
+    // getTooltipTextY: propTypes.func, // (index, value, dataset) => text
+    // onChartClick: propTypes.func, // (x, y) => {}
+  };
+
+  state = {
+    tooltipVisible: false,
+    tooltipTextX: '',
+    tooltipTextY: '',
+    tooltipTargetIndex: 0,
+    tooltipTargetValue: 0,
+  };
+
+  constructor(props) {
+    super(props);
+
+    this.getDatasMemoize = memoize(this.getDatas.bind(this))
+    // this.getDatasMemoize = (data) => this.getDatas(data);
+
+    /**
+     * NOTE: This support only 1 lines
+     * Have been sorted by `cx` props already
+     */
+    this.dataPoints = [
+      // [index]: { index, value, cx, cy }
+    ];
+  }
+
+  componentDidMount() {
+    this.onRendered({});
+  }
+
+  componentDidUpdate(prevProps, prevState, snapshot) {
+    this.onRendered(prevProps);
+  }
+
+  onRendered(prevProps) {
+    // console.log('onRendered line');
+    const { data } = this.props;
+    if (
+      prevProps.data !== data &&
+      data.datasets[0] &&
+      data.datasets[0].data &&
+      data.datasets[0].data.length > 0
+    ) {
+      this.props.onRendered && this.props.onRendered();
+    }
+  }
+
   getColor = (dataset, opacity) => {
     return (dataset.color || this.props.chartConfig.color)(opacity)
   }
@@ -12,8 +67,9 @@ class LineChart extends AbstractChart {
     return dataset.strokeWidth || this.props.chartConfig.strokeWidth || 3
   }
 
-  getDatas = data =>
-    data.reduce((acc, item) => (item.data ? [...acc, ...item.data] : acc), [])
+  getDatas = data => {
+    return data.reduce((acc, item) => (item.data ? [...acc, ...item.data] : acc), [])
+  }
 
   renderDots = config => {
     const {
@@ -22,49 +78,72 @@ class LineChart extends AbstractChart {
       height,
       paddingTop,
       paddingRight,
+      withHiddenDots,
       onDataPointClick
     } = config
+
     const output = []
-    const datas = this.getDatas(data)
+    const datas = this.getDatasMemoize(data);
+    const minDatas = Math.min(...datas);
+    const calcScaler = this.calcScaler(datas);
+
     data.map((dataset, index) => {
+      const dl = dataset.data.length;
+      this.dataPoints = []; // reset data points
+
+      const itemSpace = (width - paddingRight) / dl;
+
       dataset.data.map((x, i) => {
-        const cx =
-          paddingRight + (i * (width - paddingRight)) / dataset.data.length
+        const cx = paddingRight + i * itemSpace;
         const cy =
-          (height / 4) *
-            3 *
-            (1 - (x - Math.min(...datas)) / this.calcScaler(datas)) +
-          paddingTop
+                (height / 4) *
+                3 *
+                (1 - (x - minDatas) / calcScaler) +
+                paddingTop;
+
+
+        const pointData = {
+          value: x,
+          dataset,
+          getColor: opacity => this.getColor(dataset, opacity),
+          indexY: i,
+          cx,
+          cy,
+        };
+        this.dataPoints[i] = { index: i, value: x, cx, cy, };
+
         const onPress = () => {
-          if (!onDataPointClick) {
-            return
+          if (onDataPointClick) {
+            onDataPointClick(pointData)
           }
 
-          onDataPointClick({
-            value: x,
-            dataset,
-            getColor: opacity => this.getColor(dataset, opacity)
-          })
+          /**
+           * Click on data point will not trigger chart click,
+           * So that we need to manually handle here
+           */
+          this.handleChartClick(cx, cy, dataset);
+          // this.showDataPointTooltip(pointData);
         }
 
         output.push(
-          <Circle
-            key={Math.random()}
-            cx={cx}
-            cy={cy}
-            r="4"
-            fill={this.getColor(dataset, 0.9)}
-            onPress={onPress}
-          />,
-          <Circle
-            key={Math.random()}
-            cx={cx}
-            cy={cy}
-            r="12"
-            fill="#fff"
-            fillOpacity={0}
-            onPress={onPress}
-          />
+          // https://github.com/indiespirit/react-native-chart-kit/issues/92
+          // Bug: withDots not showing any dots
+          <React.Fragment key={Math.random()}>
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={4}
+              fill={withHiddenDots ? 'transparent' : this.getColor(dataset, 0.9)}
+              onPress={onPress}
+            />
+            {/*<Circle*/}
+            {/*cx={cx}*/}
+            {/*cy={cy}*/}
+            {/*r={2}*/}
+            {/*fill={this.getColor(dataset, 0)}*/}
+            {/*onPress={onPress}*/}
+            {/*/>*/}
+          </React.Fragment>
         )
       })
     })
@@ -99,7 +178,8 @@ class LineChart extends AbstractChart {
                 (dataset.data.length - 1)},${(height / 4) * 3 +
               paddingTop} ${paddingRight},${(height / 4) * 3 + paddingTop}`
           }
-          fill="url(#fillShadowGradient)"
+          // fill="url(#fillShadowGradient)"
+          fill={this.props.chartConfig.graphColor(0.6)}
           strokeWidth={0}
         />
       )
@@ -203,7 +283,8 @@ class LineChart extends AbstractChart {
         <Path
           key={index}
           d={d}
-          fill="url(#fillShadowGradient)"
+          // fill="url(#fillShadowGradient)"
+          fill={this.props.chartConfig.graphColor(0.2)}
           strokeWidth={0}
         />
       )
@@ -222,10 +303,10 @@ class LineChart extends AbstractChart {
       withDots = true,
       withInnerLines = true,
       withOuterLines = true,
-      withHorizontalLabels = true,
-      withVerticalLabels = true,
       style = {},
       decorator,
+      withHiddenDots = false,
+      yAxisLabelVisible = true,
       onDataPointClick
     } = this.props
     const {labels = []} = data
@@ -234,9 +315,13 @@ class LineChart extends AbstractChart {
       width,
       height
     }
-    const datas = this.getDatas(data.datasets)
+    const datas = this.getDatasMemoize(data.datasets)
+
     return (
       <View style={style}>
+        <TouchableWithoutFeedback
+          onPressIn={(e) => this.handleOnPressIn(e, data.datasets[0])}
+        >
         <Svg height={height} width={width}>
           <G>
             {this.renderDefs({
@@ -267,15 +352,13 @@ class LineChart extends AbstractChart {
                 : null}
             </G>
             <G>
-              {withHorizontalLabels
-                ? this.renderHorizontalLabels({
+              {this.renderHorizontalLabels({
                 ...config,
                 count: Math.min(...datas) === Math.max(...datas) ? 1 : 4,
                 data: datas,
                 paddingTop,
                 paddingRight
-              })
-              : null}
+              })}
             </G>
             <G>
               {withInnerLines
@@ -294,14 +377,12 @@ class LineChart extends AbstractChart {
                 : null}
             </G>
             <G>
-              {withVerticalLabels
-                ? this.renderVerticalLabels({
+              {yAxisLabelVisible && this.renderVerticalLabels({
                 ...config,
                 labels,
                 paddingRight,
                 paddingTop
-              })
-              : null}
+              })}
             </G>
             <G>
               {this.renderLine({
@@ -327,6 +408,7 @@ class LineChart extends AbstractChart {
                   data: data.datasets,
                   paddingTop,
                   paddingRight,
+                  withHiddenDots,
                   onDataPointClick
                 })}
             </G>
@@ -339,10 +421,80 @@ class LineChart extends AbstractChart {
                   paddingRight
                 })}
             </G>
+            <G>
+              {this.renderTooltipElement()}
+            </G>
           </G>
         </Svg>
+        </TouchableWithoutFeedback>
       </View>
     )
+  }
+
+  showDataPointTooltip({ indexY, value, cx, cy, dataset, getColor }) {
+    super.showDataPointTooltip({ index: indexY, value, cx, cy, dataset, getColor });
+
+    const { getTooltipTextX, getTooltipTextY } = this.props;
+    this.setState({
+      tooltipVisible: true,
+      tooltipTextX: getTooltipTextX ? getTooltipTextX(indexY, value, dataset) : '' + value,
+      tooltipTextY: getTooltipTextY ? getTooltipTextY(indexY, value, dataset) : '' + value,
+      tooltipTargetIndex: indexY,
+      tooltipTargetValue: value,
+    })
+  }
+
+  handleOnPressIn(e, firstDataset) {
+    const nativeEvent = e.nativeEvent;
+    this.handleChartClick(nativeEvent.locationX, nativeEvent.locationY, firstDataset)
+  }
+
+  handleChartClick(x, y, firstDataset) {
+    const { width, height } = this.props;
+    // console.log('{handleChartClick} width, height, x, y: ', width, height, x, y);
+
+    // find nearest data point
+    const closestPoint = this.binarySearchDataPoint(this.dataPoints, x, 0, this.dataPoints.length - 1);
+
+    // show point tooltip
+    this.showDataPointTooltip({
+      indexY: closestPoint.index,
+      value: closestPoint.value,
+      cx: closestPoint.cx,
+      cy: closestPoint.cy,
+      dataset: firstDataset,
+      getColor: () => {},
+    });
+
+    this.props.onChartClick && this.props.onChartClick(closestPoint.index, x, y);
+  }
+
+  handleChartClickByIndex(index, x, y, firstDataset) {
+    // find nearest data point
+    const closestPoint = this.dataPoints[index];
+    if (!closestPoint) {
+      return;
+    }
+
+    // show point tooltip
+    this.showDataPointTooltip({
+      indexY: closestPoint.index,
+      value: closestPoint.value,
+      cx: closestPoint.cx,
+      cy: closestPoint.cy,
+      dataset: firstDataset,
+      getColor: () => {},
+    });
+  }
+
+  binarySearchDataPoint(arr, target, start, end) {
+    const m = Math.floor((start + end)/2);
+
+    if (target == arr[m].cx) return arr[m];
+    if (start >= end) return arr[start];
+    if (end - 1 === start) return Math.abs(arr[start].cx - target) > Math.abs(arr[end].cx - target) ? arr[end] : arr[start];
+    if (target > arr[m].cx) return this.binarySearchDataPoint(arr, target, m, end);
+    if (target < arr[m].cx) return this.binarySearchDataPoint(arr, target, start, m);
   }
 }
 
